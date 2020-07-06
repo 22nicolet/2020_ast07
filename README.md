@@ -1,4 +1,5 @@
 # 2020_ast07
+Set up directories as seen in DIRECTORY_TREE.png
 
 images  - Original images. Each galaxy is in a separate sub-directory such as VCC9040
 results - result files from sextractor, or images with added stars. Each galaxy is in a separate sub-directory such as VCC9040
