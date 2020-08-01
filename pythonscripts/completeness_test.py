@@ -1,155 +1,263 @@
-#adds artificial stars to the original image
-from astropy.io import fits
-import config as cfg
+from   astropy.io import fits
 import copy
 import csv
+import config as cfg
+from astropy.table import Table
 import matplotlib.pyplot as plt
+from   matplotlib.colors import LogNorm
 import numpy as np
+from pydl.pydlutils.spheregroup import spherematch
 import os,sys
+import statistics
 import time
+import astropy.wcs as wcs
+from scipy.optimize import curve_fit
 
-# @precondition psf data is from a psf file, sigma_array has no negatives
-# adds gaussian noise (mean = pixel value, sigma = sqrt(pixel value/gain)) to each pixel of the psf
-def add_noise_to_psf(filter_index):
-    mean_array = np.copy(psf_data_array[filter_index])
-    sigma_array = np.copy(psf_data_array[filter_index])
-    sigma_array = np.sqrt(sigma_array / int(gain))
-    psf_mag_noise = np.random.normal(mean_array, sigma_array)
 
-    #print(psf_data[filter_index])
-    #plt.figure(figsize=[5,5])
-    #plt.imshow(psf_data[filter_index],origin='lower',cmap='gray_r')
-    #plt.show()
-    #print(psf_data)
-    #plt.figure(figsize=[5,5])
-    #plt.imshow(psf_mag_noise[filter_index],origin='lower',cmap='gray_r')
-    #plt.show()
-    #print(psf_mag_noise)
+def same_source(x1, y1, x2, y2):
+    if abs(x1-x2)<=RADIUS and abs(y1-y2)<=RADIUS:
+        return True
+    else:
+        return False
 
-    return psf_mag_noise
+# Return number points described by (x_data, y_data) within radius of (x_center, y_center)
+def num_src_in_radius(x_center, y_center, radius, x_data, y_data):
+    radius_square = radius*radius
+    count = 0
+    for i in range(0, len(x_data)):
+        dist_square = (x_data[i] - x_center)*(x_data[i] - x_center) + (y_data[i] - y_center)*(y_data[i] - y_center)
+        if dist_square <= radius_square:
+            count += 1
+    return [count, len(x_data)-count]
 
-# adds in NUM_GRID_POINTS * NUM_GRID_POINTS stars into the image, stars are added to a square grid around the center of the PSF
-def add_star_one_step(orig_image, image_data_origin, grid_space, x_step_size, y_step_size, ratio, mag, suffix, galaxy_name, filter_index, filter_name, noise_index, psf_data_noise):
-    image_data_addstar = copy.deepcopy(image_data_origin)
-    info_added_stars = []
+# generates command to run SExtractor
+def run_sextractor(catalog_file, image_file1, image_file2, config_file, weight_file1, weight_file2):
+    # run sextractor to generate catalog
+    command = "sex " + image_file1 + "," + image_file2 + " -c " + config_file + " -WEIGHT_IMAGE " + weight_file1 + "," + weight_file2
+    print("running command " + command)
+    os.system(command)
 
-    for i in range (0, cfg.NUM_GRID_POINTS):
-        for j in range (0, cfg.NUM_GRID_POINTS):
-            position_x = int(grid_space * (i + 1) + x_step_size)
-            position_y = int(grid_space * (j + 1) + y_step_size)
-            info_added_stars.append([position_x, position_y, mag])
+    # rename the catalog
+    command = "mv output.fits " + catalog_file
+    os.system(command)
 
-            # PSF image is 31x31 pixels, calculate x_min/max, y_min/max so PSF's center is at position_x and position_y
-            x_min = position_x - 15
-            x_max = position_x + 16
-            y_min = position_y - 15
-            y_max = position_y + 16
-
-            # Overlay the fake star on top of the image background
-            image_data_addstar[y_min:y_max, x_min:x_max] = image_data_addstar[y_min:y_max, x_min:x_max] + psf_data_noise / ratio
-
-    #plt.figure(figsize=[8, 8])
-    #plt.imshow(image_data_addstar, origin='lower', cmap='gray_r', norm=LogNorm())
-    #plt.title('After add stars on the image', fontsize=14)
-    #plt.show()
-
-    # Write out image with added stars
-    new_image_file = result_dir_name + "/" + galaxy_name + "/" + galaxy_name + "_" + filter_name + "_addstar" + str(mag) + "_" + suffix + "_" + str(noise_index) + ".fits"
-    hdu = fits.PrimaryHDU(image_data_addstar, orig_image[0].header)
-    hdu.writeto(new_image_file, overwrite=True)
-
-    truth_file = result_dir_name + "/" + galaxy_name + "/" + galaxy_name + "_" + filter_name + "_addstar" + str(mag) + "_" + suffix + "_" + str(noise_index) + "_truth.csv"
-    with open(truth_file, 'w') as csvout:
-        csv_writer = csv.writer(csvout)
-        for star in info_added_stars:
-            csv_writer.writerow(star)
-
-# nested loop to add stars into images (galaxy, filter, number of different noises, magnitudes)
-# each magnitude bin has four steps spaced by half the grid_space (size of the image/(NUM_GRID_POINTS + 1)), the steps form a square (shifted left, right, diagonally)
-def add_stars():
+# precondition : config and parameter files are copied to where the python script is run.
+# runs SExtractor for all original galaxies and images with artificial stars to generate catalog files
+def run_sextractor_for_all():
+    # Loop on all galaxies
     for g in galaxy_names:
-        base_dir_name = image_dir_name + "/" + g
+        # Run sextractor for original images
         base_file_name = image_dir_name + "/" + g + "/" + g + "_"
+        image_file1 = base_file_name + "g_" + image_file_suffix + ".fits"           # Always use green filter image for source detection
+        weight_file1 = weight_dir_name + "/" + g + "/" + g + "_" + "g_sig.fits"     # Weight file of green filter image
+        for f in filter_names:
+            image_file2 = base_file_name + f + "_" + image_file_suffix + ".fits"    # File for measurement
+            weight_file2 = weight_dir_name + "/" + g + "/" + g + "_" + f + "_sig.fits"        # Corresponding weight file
+            catalog_file =  g + "_" + f + "_" + image_file_suffix + "_cat.fits"
+            run_sextractor(catalog_file, image_file1, image_file2, config_file_name, weight_file1, weight_file2)
+
+            tmp_dir_name = result_dir_name + "/" + g + "/"
+            if not os.path.exists(tmp_dir_name):
+                os.mkdir(tmp_dir_name)
+            command = "mv " + catalog_file + " " + tmp_dir_name
+            os.system(command)
+
+        # Run sextractor for images with added stars
+        base_file_name = result_dir_name + "/" + g + "/" + g + "_"
+        for n in range(0, cfg.NUMBER_NOISES):
+            for mag in magnitudes:
+                for suffix in range(0, num_suffix):
+                    image_file1 = base_file_name + "g_addstar" + str(mag) + "_" + str(suffix) + "_" + str(n) + ".fits"  # Always use green filter image for source detection
+                    weight_file1 = weight_dir_name + "/" + g + "/" + g + "_" + "g_sig.fits"                 # Weight file of green filter image
+                    for f in filter_names:
+                        image_file2 = base_file_name + f + "_addstar" + str(mag) + "_" + str(suffix) + "_" + str(n) + ".fits"
+                        weight_file2 = weight_dir_name + "/" + g + "/" + g + "_" + f + "_sig.fits"
+
+                        catalog_file =  g + "_" + f + "_addstar" + str(mag) + "_" + str(suffix)  + "_" + str(n) + "_cat.fits"
+                        run_sextractor(catalog_file, image_file1, image_file2, config_file_name, weight_file1, weight_file2)
+
+                        tmp_dir_name = result_dir_name + "/" + g + "/"
+                        if not os.path.exists(tmp_dir_name):
+                            os.mkdir(tmp_dir_name)
+                        command = "mv " + catalog_file + " " + tmp_dir_name
+                        os.system(command)
+
+# plots the completeness function
+def plot_completeness_function(x_data, y_data, popt, color, mark):
+    color = "black"
+    #plt.figure(1)
+    plt.scatter(x=x_data, y=y_data, c=color, marker=mark, label='GC detection ratio', alpha=0.5)
+    plt.ylim(0.0, 1.0)
+    plt.xticks(np.arange(22.5, 28.5, 0.5))
+    plt.yticks(np.arange(0.0, 1.0, 0.1))
+    plt.grid(color = 'grey', linestyle = '-.', linewidth = 1)
+    plt.title('Completeness function (NUM_GRID_POINTS = ' + str(cfg.NUM_GRID_POINTS) + ')', fontsize=14)
+    plt.xlabel("Magnitudes")
+    plt.ylabel("Detection ratio")
+
+    x = np.arange(x_data[0], x_data[-1], 0.1)   #create a new array with magnitudes, each spaced by 0.1
+    y = pritchet_formula(x, *popt)
+    plt.plot(x, y, 'g--', label='fit: Alpha_f%5.3f, T1_limit = %5.3f, Factor_max = %5.3f' % tuple(popt))
+
+    plt.legend()
+    plt.show()
+
+def plot_completeness_function_all(x_data_inside, y_data_inside, x_data_outside, y_data_outside, x_data, y_data, popt, color, mark):
+    color = "black"
+    #plt.figure(1)
+    plt.scatter(x=x_data, y=y_data, c=color, marker=mark, label='GC detection ratio', alpha=0.5)
+    plt.ylim(0.0, 1.0)
+    plt.xticks(np.arange(22.5, 28.5, 0.5))
+    plt.yticks(np.arange(0.0, 1.0, 0.1))
+    plt.grid(color = 'grey', linestyle = '-.', linewidth = 1)
+    plt.title('Completeness function (NUM_GRID_POINTS = ' + str(cfg.NUM_GRID_POINTS) + ')', fontsize=14)
+    plt.xlabel("Magnitudes")
+    plt.ylabel("Detection ratio")
+
+    x = np.arange(x_data[0], x_data[-1], 0.1)   #create a new array with magnitudes, each spaced by 0.1
+    y = pritchet_formula(x, *popt)
+    plt.plot(x, y, 'g--', label='fit: Alpha_f%5.3f, T1_limit = %5.3f, Factor_max = %5.3f' % tuple(popt))
+
+    plt.scatter(x=x_data_inside, y=y_data_inside, c='r', marker='+', label='GC detection ratio', alpha=0.5)
+    plt.scatter(x=x_data_outside, y=y_data_outside, c='b', marker='*', label='GC detection ratio', alpha=0.5)
+
+    plt.legend()
+    plt.show()
+
+def pritchet_formula(t1, alpha_f, t1_limit, factor_max):
+    return 0.5 * (1 - (alpha_f*(t1 - t1_limit)/np.sqrt(1 + alpha_f * alpha_f * (t1 - t1_limit) * (t1 - t1_limit)))) * factor_max
+
+# finds detection ratio:
+# number of artificial stars detected = number of stars detected in the images with added psf - number detected in the original image
+# average the difference among the four steps in each magnitude
+# divide difference by total number of artificial stars added to get detection ratio
+def completeness_test():
+    for g in galaxy_names:
         filter_index = 0
         for f in filter_names:
-            orig_image_file = base_file_name + f + "_modsub2.fits"  # File for measurement
-            orig_image = fits.open(orig_image_file)
-            image_data_origin = orig_image[0].data
-            size = len(image_data_origin[1])                        # size is the dimension of the square image
-            grid_space = size/(cfg.NUM_GRID_POINTS + 1)                 # the number of pixels between two grid points
+            start = time.time()
+            num_star_per_mag_bin = [0 for x in range(len(magnitudes))]
+            num_star_per_mag_bin_inside = [0 for x in range(len(magnitudes))]
+            num_star_per_mag_bin_outside = [0 for x in range(len(magnitudes))]
+
+            # Get number of detected sources from sextractor produced catalog of original image
+            orig_fits_file = result_dir_name + "/" + g + "/" + g + "_" + f + "_modsub2_cat.fits"
+            orig_cat = fits.open(orig_fits_file)
+            #orig_cat.info()
+            orig_cat_data = Table(orig_cat[2].data)
+            orig_num_detected = len(orig_cat_data)
+
             for n in range(0, cfg.NUMBER_NOISES):
-                # Add Gaussian noises to each pixel of the PSF
-                psf_data_noise = add_noise_to_psf(filter_index)
+                # Get number of detected sources from sextractor produced catalog of image with added stars
+                mag_index = 0
 
-                # Scale to some magnitude
-                # Equations: m1-m2=-2.5log(F1/F2), F1/F2=10**(-0.4*(m1-m2))
-                psf_mag = -2.5 * np.log10(sum(sum(psf_data_noise))) + 30
-                print('galaxy='+g+' filter='+f+' noise_idx='+str(n)+' psf_mag='+str(psf_mag))
+                for mag in magnitudes:
+                    truth_inside_total = 0
+                    truth_outside_total = 0
+                    for suffix in range(0, num_suffix):
+                        tmp_dir_name = result_dir_name + "/" + g + "/"
+                        catalog_file = tmp_dir_name + g + "_" + f + "_addstar" + str(mag) + "_" + str(suffix) + "_" + str(n) + "_cat.fits"
+                        image_file = tmp_dir_name + g + "_" + f + "_addstar" + str(mag) + "_" + str(suffix) + "_" + str(n) + ".fits"
+                        w = wcs.WCS(image_file)
+                        x_center, y_center = w.all_world2pix(cfg.RA_GALAXY_CENTER[0], cfg.DEC_GALAXY_CENTER[0], 1)
+                        addstar_cat = fits.open(catalog_file)
+                        #addstar_cat.info()
+                        addstar_cat_data = Table(addstar_cat[2].data)
+                        x_cat = addstar_cat_data['X_IMAGE']
+                        y_cat = addstar_cat_data['Y_IMAGE']
+                        ra_cat_col = addstar_cat_data['ALPHA_J2000']
+                        dec_cat_col = addstar_cat_data['DELTA_J2000']
+                        ra_cat = np.array(ra_cat_col)
+                        dec_cat = np.array(dec_cat_col)
+                        addstar_cat.close()
 
-                for mag in magnitude_ranges:  # generate fake stars of different magnitude
-                    ratio = 10 ** (-0.4 * (psf_mag - mag))  # calculate the flux ratio
+                        # read truth csv file
+                        x_truth = []
+                        y_truth = []
+                        truth_file = tmp_dir_name + g + "_" + f + "_addstar" + str(mag) + "_" + str(suffix) + "_" + str(n) + "_truth.csv"
+                        with open(truth_file) as csv_file:
+                            csv_reader = csv.reader(csv_file, delimiter=',')
+                            for row in csv_reader:
+                                x_truth.append(float(row[0]))
+                                y_truth.append(float(row[1]))
 
-                    add_star_one_step(orig_image, image_data_origin, grid_space, 0, 0, ratio, mag, "0", g, filter_index, f, n, psf_data_noise)
-                    add_star_one_step(orig_image, image_data_origin, grid_space, grid_space/2, 0, ratio, mag, "1", g, filter_index, f, n, psf_data_noise)
-                    add_star_one_step(orig_image, image_data_origin, grid_space, 0, grid_space/2, ratio, mag, "2", g, filter_index, f, n, psf_data_noise)
-                    add_star_one_step(orig_image, image_data_origin, grid_space, grid_space/2,  grid_space/2, ratio, mag, "3", g, filter_index, f, n, psf_data_noise)
+                        [truth_inside, truth_outside] = num_src_in_radius(x_center, y_center, cfg.CR_RADIUS, x_truth, y_truth)
+                        truth_inside_total += truth_inside
+                        truth_outside_total += truth_outside
+                        #translates x y coordinates into ra dec (wcs world coordinates)
+                        ra_truth, dec_truth = w.all_pix2world(x_truth, y_truth, 1)
 
-        #            plt.figure(figsize=[8, 8])
-        #            plt.imshow(image_data_origin, origin='lower', cmap='gray_r', norm=LogNorm())
-        #            plt.title('Galaxy model subtracted image', fontsize=14)
-        #            plt.show()
+                        # spherematch on each inserted artificial GC (truth) to check if it's detected.
+                        # If yes, add to a set for quick look up.
+                        coords = ()
+                        coords = spherematch(ra_cat, dec_cat, ra_truth, dec_truth, matchlength=0.0001, chunksize=0.0005)
+                        num_detected = len(coords[0])
 
-        #            plt.figure(figsize=[8, 8])
-        #            plt.imshow(image_data_addstar, origin='lower', cmap='gray_r', norm=LogNorm())
-        #            plt.title('After add stars on the image', fontsize=14)
-        #            plt.show()
+                        x_detected = []
+                        y_detected = []
+
+                        for index in coords[1]:
+                            x_detected.append(x_truth[index])
+                            y_detected.append(y_truth[index])
+                        [detected_inside, detected_outside] = num_src_in_radius(x_center, y_center, cfg.CR_RADIUS, x_detected, y_detected)
+
+                        num_star_per_mag_bin_inside[mag_index] += detected_inside
+                        num_star_per_mag_bin_outside[mag_index] += detected_outside
+                        num_star_per_mag_bin[mag_index] += num_detected
+                        #print(str(mag) + ", " + str(suffix) + ", " + str(num_detected))
+                    # Average numbers for all catalogs per magnitude bin, divided by true number of added stars
+                    num_star_per_mag_bin[mag_index] /= (1.0 * num_suffix * (cfg.NUM_GRID_POINTS*cfg.NUM_GRID_POINTS))
+                    num_star_per_mag_bin_outside[mag_index] /= 1.0 * truth_outside_total
+                    num_star_per_mag_bin_inside[mag_index] /= 1.0 * truth_inside_total
+                    mag_index += 1
+
+            end = time.time()
+            print('Elapsed time of completeness test = ' + str(end - start) + ' seconds')
+            popt, pcov = curve_fit(pritchet_formula, magnitudes, num_star_per_mag_bin)
+            filter_index += 1
+
+            completeness_csv_file = result_dir_name + "/" + g + "/" + g + "_" + f + "_completeness.csv"
+            with open(completeness_csv_file, 'w') as csvout:
+                csv_writer = csv.writer(csvout)
+                csv_writer.writerow(magnitudes)
+                csv_writer.writerow(num_star_per_mag_bin)
+                csv_writer.writerow(['alpha_f', popt[0]])
+                csv_writer.writerow(['t1_limit', popt[1]])
+            plt.figure(1)
+            #plot_completeness_function(magnitudes, num_star_per_mag_bin, popt, 'r', 'x')
+            #plot_completeness_function(magnitudes, num_star_per_mag_bin_inside, popt, 'g', '+')
+            #plot_completeness_function(magnitudes, num_star_per_mag_bin_outside, popt, 'b', '*')
+            plot_completeness_function_all(magnitudes, num_star_per_mag_bin_inside, \
+                                       magnitudes, num_star_per_mag_bin_outside, \
+                                       magnitudes, num_star_per_mag_bin, \
+                                       popt, 'b', '*')
 
 
-#main
+# main
 filter_names = ("g")
 image_dir_name = "../../../SIP2020/images"
 result_dir_name = "../../../SIP2020/results"
+config_file_name = "ngvs.sex"
 galaxy_names = ["VCC0940"]
-magnitude_ranges = (23, 23.5, 24, 24.5, 25, 25.5, 26, 26.5, 27, 27.5, 28)
+magnitudes = (23, 23.5, 24, 24.5, 25, 25.5, 26, 26.5, 27, 27.5, 28)
 NUM_STARS_TO_ADD_PER_MAG = 100
+INDEX_4 = 5
+INDEX_8 = 9
+num_suffix = 4
 
-# Downloading PSF files
-psf_data = [0 for x in range(len(filter_names))]
-psf_data_array = [0 for x in range(len(filter_names))]
+RADIUS = 1  # If x1 and x2 are less than RADIUS pixels away, consider them to be the same source
+
 filter_index = 0
 
-# Load effective gain table from csv file from
-# http://www.cadc-ccda.hia-iha.nrc-cnrc.gc.ca/en/community/ngvs/docs/gain.html
-gain = 1
-gain_table = {}
-with open('ngvs_gain_table.csv') as csv_file:
-    csv_reader = csv.reader(csv_file, delimiter=',')
-    for row in csv_reader:
-        gain_table[row[0]] = row[1]
+weight_dir_name = "../../../SIP2020/images"
+image_file_suffix = "modsub2"
 
+if len(sys.argv) == 3:
+    image_dir_name = sys.argv[1]
+    image_file_suffix = sys.argv[2]
 
-for f in filter_names:
-    image_key = 'NGVS-1+0.l.' + f
-    image = 'image=' + image_key + '.Mg002.fits'   # You may change the fieldname, band, x&y position etc.
-    x = '17366'
-    y = '19409'
-    psf_URL = '\'' +'https://www.cadc-ccda.hia-iha.nrc-cnrc.gc.ca/cadcbin/community/ngvs/NGVSpsf.pl?'+image+'&x='+x+'&y='+y + '\''
-    print(psf_URL)
-    os.system('wget -O psf.fits %s' %psf_URL)           # Use wget command to download the file
-    time.sleep(1)                                       # Give wget some time to get the file from web
-
-    #reads in psf, changes the negative data numbers to 0, stores in a numpy array for further processing
-    hdulist = fits.open('psf.fits')
-    psf_data[filter_index] = hdulist[0].data
-    np_array = np.array(psf_data[filter_index]) # Convert list into a numpy array
-    np_array_sign = np.sign(np_array)  # negative elements become -1, 0 stays 0, positive elements become 1
-    np_array *= (np_array > 0)                  # converts negative elements to -0
-    np_array *= np_array_sign                   # replaces -0 with 0 to prevent error later on
-    psf_data_array[filter_index] = np.copy(np_array)
-    filter_index += 1
-
-gain = gain_table[image_key]
 start = time.time()
-add_stars()
+#run_sextractor_for_all()
 end = time.time()
 print('Elapsed time = '+str(end-start)+' seconds')
+completeness_test()
