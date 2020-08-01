@@ -31,10 +31,13 @@ def add_noise_to_psf(filter_index):
 # adds in NUM_GRID_POINTS * NUM_GRID_POINTS stars into the image, stars are added to a square grid around the center of the PSF
 def add_star_one_step(orig_image, image_data_origin, grid_space, x_step_size, y_step_size, ratio, mag, suffix, galaxy_name, filter_index, filter_name, noise_index, psf_data_noise):
     image_data_addstar = copy.deepcopy(image_data_origin)
+    info_added_stars = []
+
     for i in range (0, cfg.NUM_GRID_POINTS):
         for j in range (0, cfg.NUM_GRID_POINTS):
             position_x = int(grid_space * (i + 1) + x_step_size)
             position_y = int(grid_space * (j + 1) + y_step_size)
+            info_added_stars.append([position_x, position_y, mag])
 
             # PSF image is 31x31 pixels, calculate x_min/max, y_min/max so PSF's center is at position_x and position_y
             x_min = position_x - 15
@@ -43,7 +46,7 @@ def add_star_one_step(orig_image, image_data_origin, grid_space, x_step_size, y_
             y_max = position_y + 16
 
             # Overlay the fake star on top of the image background
-            image_data_addstar[x_min:x_max, y_min:y_max] = image_data_addstar[x_min:x_max, y_min:y_max] + psf_data_noise / ratio
+            image_data_addstar[y_min:y_max, x_min:x_max] = image_data_addstar[y_min:y_max, x_min:x_max] + psf_data_noise / ratio
 
     #plt.figure(figsize=[8, 8])
     #plt.imshow(image_data_addstar, origin='lower', cmap='gray_r', norm=LogNorm())
@@ -54,6 +57,12 @@ def add_star_one_step(orig_image, image_data_origin, grid_space, x_step_size, y_
     new_image_file = result_dir_name + "/" + galaxy_name + "/" + galaxy_name + "_" + filter_name + "_addstar" + str(mag) + "_" + suffix + "_" + str(noise_index) + ".fits"
     hdu = fits.PrimaryHDU(image_data_addstar, orig_image[0].header)
     hdu.writeto(new_image_file, overwrite=True)
+
+    truth_file = result_dir_name + "/" + galaxy_name + "/" + galaxy_name + "_" + filter_name + "_addstar" + str(mag) + "_" + suffix + "_" + str(noise_index) + "_truth.csv"
+    with open(truth_file, 'w') as csvout:
+        csv_writer = csv.writer(csvout)
+        for star in info_added_stars:
+            csv_writer.writerow(star)
 
 # nested loop to add stars into images (galaxy, filter, number of different noises, magnitudes)
 # each magnitude bin has four steps spaced by half the grid_space (size of the image/(NUM_GRID_POINTS + 1)), the steps form a square (shifted left, right, diagonally)
@@ -98,8 +107,8 @@ def add_stars():
 
 #main
 filter_names = ("g")
-image_dir_name = "../images"
-result_dir_name = "../results"
+image_dir_name = "../../../SIP2020/images"
+result_dir_name = "../../../SIP2020/results"
 galaxy_names = ["VCC0940"]
 magnitude_ranges = (23, 23.5, 24, 24.5, 25, 25.5, 26, 26.5, 27, 27.5, 28)
 NUM_STARS_TO_ADD_PER_MAG = 100
@@ -124,7 +133,7 @@ for f in filter_names:
     image = 'image=' + image_key + '.Mg002.fits'   # You may change the fieldname, band, x&y position etc.
     x = '17366'
     y = '19409'
-    psf_URL = 'https://www.cadc-ccda.hia-iha.nrc-cnrc.gc.ca/cadcbin/community/ngvs/NGVSpsf.pl?'+image+'&x='+x+'&y='+y
+    psf_URL = '\'' +'https://www.cadc-ccda.hia-iha.nrc-cnrc.gc.ca/cadcbin/community/ngvs/NGVSpsf.pl?'+image+'&x='+x+'&y='+y + '\''
     print(psf_URL)
     os.system('wget -O psf.fits %s' %psf_URL)           # Use wget command to download the file
     time.sleep(1)                                       # Give wget some time to get the file from web
