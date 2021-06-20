@@ -10,33 +10,33 @@ import time
 
 # @precondition psf data is from a psf file, sigma_array has no negatives
 # adds gaussian noise (mean = pixel value, sigma = sqrt(pixel value/gain)) to each pixel of the psf
-def add_noise_to_psf(filter_index):
-    mean_array = np.copy(psf_data_array[filter_index])
-    sigma_array = np.copy(psf_data_array[filter_index])
+def add_noise_to_psf(data_array, gain):
+    mean_array = np.copy(data_array)
+    sigma_array = np.copy(data_array)
     sigma_array = np.sqrt(sigma_array / int(gain))
     psf_mag_noise = np.random.normal(mean_array, sigma_array)
 
-    #print(psf_data[filter_index])
-    #plt.figure(figsize=[5,5])
-    #plt.imshow(psf_data[filter_index],origin='lower',cmap='gray_r')
-    #plt.show()
-    #print(psf_data)
-    #plt.figure(figsize=[5,5])
-    #plt.imshow(psf_mag_noise[filter_index],origin='lower',cmap='gray_r')
-    #plt.show()
-    #print(psf_mag_noise)
+#    plt.figure(figsize=[5,5])
+#    plt.imshow(data_array,origin='lower',cmap='gray_r')
+#    plt.show()
+#    print(data_array)
+
+#    plt.figure(figsize=[5,5])
+#    plt.imshow(psf_mag_noise,origin='lower',cmap='gray_r')
+#    plt.show()
+#    print(psf_mag_noise)
 
     return psf_mag_noise
 
-# adds in NUM_GRID_POINTS * NUM_GRID_POINTS stars into the image, stars are added to a square grid around the center of the PSF
-def add_star_one_step(orig_image, image_data_origin, grid_space, x_step_size, y_step_size, ratio, mag, suffix, galaxy_name, filter_index, filter_name, noise_index, psf_data_noise):
+# adds in num_grid_points ^ 2 stars into the image, stars are added to a square grid around the center of the PSF
+def add_star_one_step(orig_image, image_data_origin, num_grid_points, x_step_size, y_step_size, ratio, mag, suffix, galaxy_name, filter_index, filter_name, noise_index, psf_data_noise):
     image_data_addstar = copy.deepcopy(image_data_origin)
     info_added_stars = []
 
-    for i in range (0, cfg.NUM_GRID_POINTS):
-        for j in range (0, cfg.NUM_GRID_POINTS):
-            position_x = int(grid_space * (i + 1) + x_step_size)
-            position_y = int(grid_space * (j + 1) + y_step_size)
+    for i in range (0, num_grid_points):
+        for j in range (0, num_grid_points):
+            position_x = int(cfg.PIXEL_BETWEEN_GCS * (i + 1) + x_step_size)
+            position_y = int(cfg.PIXEL_BETWEEN_GCS * (j + 1) + y_step_size)
             info_added_stars.append([position_x, position_y, mag])
 
             # PSF image is 31x31 pixels, calculate x_min/max, y_min/max so PSF's center is at position_x and position_y
@@ -65,90 +65,103 @@ def add_star_one_step(orig_image, image_data_origin, grid_space, x_step_size, y_
             csv_writer.writerow(star)
 
 # nested loop to add stars into images (galaxy, filter, number of different noises, magnitudes)
-# each magnitude bin has four steps spaced by half the grid_space (size of the image/(NUM_GRID_POINTS + 1)), the steps form a square (shifted left, right, diagonally)
+# each magnitude bin has four steps spaced by half the pixels between GCS, the steps form a square (shifted left, right, diagonally)
 def add_stars():
+    galaxy_index = 0
     for g in galaxy_names:
-        base_dir_name = image_dir_name + "/" + g
+        # Create result directory for galaxy g if it hasn't existed
+        temp_dir_name = result_dir_name + "/" + g + "/"
+        if not os.path.exists(temp_dir_name):
+            os.mkdir(temp_dir_name)
         base_file_name = image_dir_name + "/" + g + "/" + g + "_"
         filter_index = 0
         for f in filter_names:
-            orig_image_file = base_file_name + f + "_modsub2.fits"  # File for measurement
+            suffix = 9  # original image file could be _modesub1, _modsub2, _modsub3, etc.  Take the last one.
+            orig_image_file = base_file_name + f + "_modsub" + str(suffix) + ".fits"
+            while (not os.path.exists(orig_image_file)):
+                suffix -= 1
+                orig_image_file = base_file_name + f + "_modsub" + str(suffix) + ".fits"
+                if suffix < 1:
+                    break
             orig_image = fits.open(orig_image_file)
             image_data_origin = orig_image[0].data
             size = len(image_data_origin[1])                        # size is the dimension of the square image
-            grid_space = size/(cfg.NUM_GRID_POINTS + 1)                 # the number of pixels between two grid points
+            num_grid_points = int(size/(cfg.PIXEL_BETWEEN_GCS) - 1) # the number of pixels between two grid points
             for n in range(0, cfg.NUMBER_NOISES):
                 # Add Gaussian noises to each pixel of the PSF
-                psf_data_noise = add_noise_to_psf(filter_index)
+                psf_data_noise = add_noise_to_psf(psf_data_array_list[galaxy_index][filter_index], psf_gain_list[galaxy_index][filter_index])
 
                 # Scale to some magnitude
                 # Equations: m1-m2=-2.5log(F1/F2), F1/F2=10**(-0.4*(m1-m2))
                 psf_mag = -2.5 * np.log10(sum(sum(psf_data_noise))) + 30
                 print('galaxy='+g+' filter='+f+' noise_idx='+str(n)+' psf_mag='+str(psf_mag))
 
-                for mag in magnitude_ranges:  # generate fake stars of different magnitude
+                for mag in cfg.MAGNITUDES:  # generate fake stars of different magnitude
                     ratio = 10 ** (-0.4 * (psf_mag - mag))  # calculate the flux ratio
 
-                    add_star_one_step(orig_image, image_data_origin, grid_space, 0, 0, ratio, mag, "0", g, filter_index, f, n, psf_data_noise)
-                    add_star_one_step(orig_image, image_data_origin, grid_space, grid_space/2, 0, ratio, mag, "1", g, filter_index, f, n, psf_data_noise)
-                    add_star_one_step(orig_image, image_data_origin, grid_space, 0, grid_space/2, ratio, mag, "2", g, filter_index, f, n, psf_data_noise)
-                    add_star_one_step(orig_image, image_data_origin, grid_space, grid_space/2,  grid_space/2, ratio, mag, "3", g, filter_index, f, n, psf_data_noise)
+                    add_star_one_step(orig_image, image_data_origin, num_grid_points, 0, 0, ratio, mag, "0", g, filter_index, f, n, psf_data_noise)
+                    add_star_one_step(orig_image, image_data_origin, num_grid_points, cfg.PIXEL_BETWEEN_GCS/2, 0, ratio, mag, "1", g, filter_index, f, n, psf_data_noise)
+                    add_star_one_step(orig_image, image_data_origin, num_grid_points, 0, cfg.PIXEL_BETWEEN_GCS/2, ratio, mag, "2", g, filter_index, f, n, psf_data_noise)
+                    add_star_one_step(orig_image, image_data_origin, num_grid_points, cfg.PIXEL_BETWEEN_GCS/2,  cfg.PIXEL_BETWEEN_GCS/2, ratio, mag, "3", g, filter_index, f, n, psf_data_noise)
 
         #            plt.figure(figsize=[8, 8])
         #            plt.imshow(image_data_origin, origin='lower', cmap='gray_r', norm=LogNorm())
         #            plt.title('Galaxy model subtracted image', fontsize=14)
         #            plt.show()
-
-        #            plt.figure(figsize=[8, 8])
-        #            plt.imshow(image_data_addstar, origin='lower', cmap='gray_r', norm=LogNorm())
-        #            plt.title('After add stars on the image', fontsize=14)
-        #            plt.show()
-
+            filter_index += 1
+        galaxy_index += 1
 
 #main
-filter_names = ("g")
-image_dir_name = "../../../SIP2020/images"
-result_dir_name = "../../../SIP2020/results"
-galaxy_names = ["VCC0940"]
-magnitude_ranges = (23, 23.5, 24, 24.5, 25, 25.5, 26, 26.5, 27, 27.5, 28)
-NUM_STARS_TO_ADD_PER_MAG = 100
-
-# Downloading PSF files
-psf_data = [0 for x in range(len(filter_names))]
-psf_data_array = [0 for x in range(len(filter_names))]
-filter_index = 0
+cfg.load_sample_gal()
+filter_names = cfg.FILTER_NAMES
+image_dir_name = cfg.IMAGE_DIR_NAME
+result_dir_name = cfg.RESULT_DIR_NAME
+galaxy_names = cfg.GALAXY_NAMES
 
 # Load effective gain table from csv file from
 # http://www.cadc-ccda.hia-iha.nrc-cnrc.gc.ca/en/community/ngvs/docs/gain.html
-gain = 1
+#gain = 1
 gain_table = {}
 with open('ngvs_gain_table.csv') as csv_file:
     csv_reader = csv.reader(csv_file, delimiter=',')
     for row in csv_reader:
         gain_table[row[0]] = row[1]
 
+# Downloading PSF files
+#psf_data_list = []
+psf_data_array_list = []
+psf_gain_list = []
+galaxy_index = 0
+for g in galaxy_names:
+    filter_index = 0
+    psf_data = [0 for x in range(len(cfg.FILTER_NAMES))]
+    psf_data_array = [0 for x in range(len(cfg.FILTER_NAMES))]
+    psf_gain = [0 for x in range(len(cfg.FILTER_NAMES))]
+    for f in filter_names:
+        image_key = cfg.GALAXY_FIELD_NAMES[galaxy_index] + '.l.' + f
+        image = 'image=' + image_key + '.Mg002.fits'   # You may change the field name, band, x&y position etc.
+        x = str(cfg.GALAXY_PSF_X[galaxy_index])
+        y = str(cfg.GALAXY_PSF_Y[galaxy_index])
+        psf_URL = '\'' +'https://www.cadc-ccda.hia-iha.nrc-cnrc.gc.ca/cadcbin/community/ngvs/NGVSpsf.pl?'+image+'&x='+x+'&y='+y + '\''
+        os.system('wget -O psf.fits %s' %psf_URL)           # Use wget command to download the file
+        time.sleep(1)                                       # Give wget some time to get the file from web
 
-for f in filter_names:
-    image_key = 'NGVS-1+0.l.' + f
-    image = 'image=' + image_key + '.Mg002.fits'   # You may change the fieldname, band, x&y position etc.
-    x = '17366'
-    y = '19409'
-    psf_URL = '\'' +'https://www.cadc-ccda.hia-iha.nrc-cnrc.gc.ca/cadcbin/community/ngvs/NGVSpsf.pl?'+image+'&x='+x+'&y='+y + '\''
-    print(psf_URL)
-    os.system('wget -O psf.fits %s' %psf_URL)           # Use wget command to download the file
-    time.sleep(1)                                       # Give wget some time to get the file from web
+        #reads in psf, changes the negative data numbers to 0, stores in a numpy array for further processing
+        hdulist = fits.open('psf.fits')
+        psf_data[filter_index] = hdulist[0].data
+        np_array = np.array(psf_data[filter_index]) # Convert list into a numpy array
+        np_array_sign = np.sign(np_array)  # negative elements become -1, 0 stays 0, positive elements become 1
+        np_array *= (np_array > 0)                  # converts negative elements to -0
+        np_array *= np_array_sign                   # replaces -0 with 0 to prevent error later on
+        psf_data_array[filter_index] = np.copy(np_array)
+        psf_gain[filter_index] = gain_table[image_key]
+        filter_index += 1
+#    psf_data_list.append(psf_data)
+    psf_data_array_list.append(psf_data_array)
+    psf_gain_list.append(psf_gain)
+    galaxy_index += 1
 
-    #reads in psf, changes the negative data numbers to 0, stores in a numpy array for further processing
-    hdulist = fits.open('psf.fits')
-    psf_data[filter_index] = hdulist[0].data
-    np_array = np.array(psf_data[filter_index]) # Convert list into a numpy array
-    np_array_sign = np.sign(np_array)  # negative elements become -1, 0 stays 0, positive elements become 1
-    np_array *= (np_array > 0)                  # converts negative elements to -0
-    np_array *= np_array_sign                   # replaces -0 with 0 to prevent error later on
-    psf_data_array[filter_index] = np.copy(np_array)
-    filter_index += 1
-
-gain = gain_table[image_key]
+#gain = gain_table[image_key]
 start = time.time()
 add_stars()
 end = time.time()
