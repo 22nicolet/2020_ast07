@@ -8,7 +8,6 @@ pythonscripts - python scripts, as well as the run directory
 #commands to run for the processing pipeline
 git clone https://github.com/22nicolet/2020_ast07.git
 cd 2020_ast07/
-mkdir results
 cd pythonscripts
 python add_stars.py          # Add artifical stars to model subtracted galaxy images 
 python completeness_test.py  # Run completeness tests for the images produced by add_stars.py
