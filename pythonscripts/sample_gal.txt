@@ -1,0 +1,2 @@
+Name RA(deg) Dec(deg) gmag Re,g(arcsec) NGVS_field x y Au Ag Ar Ai Az
+VCC0940 186.696095 12.453972 14.401 19.336 NGVS-1+0 2011 17741 0.126 0.094 0.066 0.046 0.014
