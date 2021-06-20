@@ -9,9 +9,11 @@ MAG_THRESHOLD=24.5
 MAGNITUDES = (23.0, 23.5, 24.0, 24.5, 25.0, 25.5, 26.0, 26.5, 27.0, 27.5, 28.0)
 NUM_STEPS = 4
 ARCSEC_PER_PIXEL = 0.187
+### Customize the following directories base on where you store the files.
 IMAGE_DIR_NAME = "../images"
 RESULT_DIR_NAME = "../results"
 WEIGHT_DIR_NAME = "../images"
+###
 SIGMA_G = 0.8
 MU_G = 23.9
 NUM_MAG_DELTA = 1000    #number of delta along magnitude axis for Simpson' rule approximation
