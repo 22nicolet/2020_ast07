@@ -1079,12 +1079,12 @@ def analyze_all_galaxies():
 def do_everything():
     tot_start = time.time()
     start = time.time()
-#    run_sextractor_for_all()
+    run_sextractor_for_all()
     end = time.time()
     print("Time taken running SExtractor: " + str(end - start) + " seconds.")
 
     start = time.time()
-#    create_table_for_all()
+    create_table_for_all()
     end = time.time()
     print("Time taken creating table: " + str(end - start) + " seconds.")
 
