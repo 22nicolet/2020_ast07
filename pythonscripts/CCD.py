@@ -1001,7 +1001,7 @@ def calculate_num_gcs(galaxy_name, galaxy_index, gcs_observed_table, surface_den
     M_V = V - 31.09
     S_N = 1.0 * num_gcs * pow(10, 0.4 * (M_V + 15.0))
 
-    sersic_result = [galaxy_name, num_gcs, Re_sersic, cfg.GALAXY_EFFECTIVE_RADII[galaxy_index], M_V, S_N]
+    sersic_result = [galaxy_name, num_gcs, Re_sersic, cfg.GALAXY_EFFECTIVE_RADII[galaxy_index], M_V, S_N, Bg_sersic]
     gcs_info_table.append(sersic_result)
 
 #analyze_all_galaxies does two things:
@@ -1017,7 +1017,7 @@ def analyze_all_galaxies():
     tmpstr = '#GCs (beyond ' + str(previous_factor) + ' Re)'
     csv_header.append(tmpstr)
     gcs_header = ['Galaxy Name', '#GCs (Integraton of Sersic)', 'Effective Radius (GC System)',
-                  'Effective Radius (Galaxy)', 'M_V', 'GC Specific Frequency']
+                  'Effective Radius (Galaxy)', 'M_V', 'GC Specific Frequency', 'GC Background']
 
     gcs_observed_table = []             #Number of GCs for each annulus
     gcs_observed_table.append(csv_header)
@@ -1079,12 +1079,12 @@ def analyze_all_galaxies():
 def do_everything():
     tot_start = time.time()
     start = time.time()
-    run_sextractor_for_all()
+#    run_sextractor_for_all()
     end = time.time()
     print("Time taken running SExtractor: " + str(end - start) + " seconds.")
 
     start = time.time()
-    create_table_for_all()
+#    create_table_for_all()
     end = time.time()
     print("Time taken creating table: " + str(end - start) + " seconds.")
 
